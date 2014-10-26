@@ -120,6 +120,10 @@ THREE.InteractionManager = function(camera, renderer, domElement)
     this.setTargetDomElement(domElement);
 };
 
+THREE.InteractionManager.noop = function()
+{
+};
+
 THREE.InteractionManager.prototype.constructor = THREE.InteractionManager;
 
 // # Destructor
@@ -153,7 +157,7 @@ THREE.InteractionManager.prototype.setRenderer = function(renderer, setDomElemen
 
 THREE.InteractionManager.prototype.setTargetDomElement = function(domElement)
 {
-    this.removeEvents();
+    this.removeEventListeners();
 
     if (window.navigator.msPointerEnabled)
     {
@@ -180,7 +184,7 @@ THREE.InteractionManager.prototype.setTargetDomElement = function(domElement)
     window.addEventListener('mouseup',  this.onMouseUp, true);
 };
 
-THREE.InteractionManager.prototype.removeEvents = function()
+THREE.InteractionManager.prototype.removeEventListeners = function()
 {
     if (!this.interactionDOMElement) return;
 
@@ -252,7 +256,7 @@ THREE.InteractionManager.prototype.bind = function(object3d, eventName, callback
 
     object3d.events[eventName].push({
         callback: callback,
-        useCapture: useCapture,
+        useCapture: !!useCapture,
         namespace: namespace
     });
 
@@ -264,6 +268,16 @@ THREE.InteractionManager.prototype.bind = function(object3d, eventName, callback
     if(this.interactiveItems[eventName].indexOf(object3d) === -1)
     {
         this.interactiveItems[eventName].push(object3d);
+    }
+
+    // bind an empty mousemove on over/out
+    if(eventName === 'mouseover' || eventName === 'mouseout')
+    {
+        var bound = this.bound('mousemove', object3d);
+        if(!bound || !bound.length)
+        {
+            this.bind(object3d, 'mousemove', THREE.InteractionManager.noop);
+        }
     }
 };
 
@@ -312,17 +326,17 @@ THREE.InteractionManager.prototype.unbind = function(object3d, eventName, callba
     
     for(var i = handlers.length - 1; i >= 0; i--)
     {
-        var handler = handlers[i];
-        if(useCapture === undefined)
+        handler = handlers[i];
+        if(callback === undefined)
         {
-            if(handler.callback === callback && handler.namespace === namespace)
+            if(!namespace || handler.namespace === namespace)
             {
                 handlers.splice(i, 1);
             }
         }
-        else if(callback === undefined)
+        else if(useCapture === undefined)
         {
-            if(handler.namespace === namespace)
+            if(handler.callback === callback && handler.namespace === namespace)
             {
                 handlers.splice(i, 1);
             }
@@ -344,10 +358,30 @@ THREE.InteractionManager.prototype.unbind = function(object3d, eventName, callba
             this.interactiveItems[eventName].splice(index, 1);
         }
     }
+
+    // remove empty mousemove if no over/out left
+    if(eventName === 'mouseover' || eventName === 'mouseout')
+    {
+        var boundOut = this.bound('mouseout', object3d);
+        var boundOver = this.bound('mouseout', object3d);
+        if((!boundOut || !boundOut.length) && (!boundOver || !boundOver.length))
+        {
+            this.unbind(object3d, 'mousemove', THREE.InteractionManager.noop);
+        }
+    }
 };
 
 THREE.InteractionManager.prototype.addEventListener = THREE.InteractionManager.prototype.bind;
 THREE.InteractionManager.prototype.removeEventListener = THREE.InteractionManager.prototype.unbind;
+
+THREE.InteractionManager.prototype.removeEvents = function(object3d)
+{
+    this.unbind(object3d, THREE.InteractionManager.eventNamesString);
+    if(object3d.events)
+    {
+        delete object3d.events;
+    }
+};
 
 THREE.Object3D.prototype.on = function(eventName, callback, useCapture)
 {
@@ -375,6 +409,19 @@ THREE.Object3D.prototype.off = function(eventName, callback, useCapture)
     return this;
 };
 
+THREE.Object3D.prototype.removeEvents = function()
+{
+    if(THREE.Object3D.InteractionManager !== undefined)
+    {
+        THREE.Object3D.InteractionManager.removeEvents(this);
+    }
+    else
+    {
+        console.log("InteractionManager must be initialized as: THREE.Object3D.InteractionManager = new THREE.InteractionManager(camera, renderer);");
+    }
+    return this;
+};
+
 THREE.InteractionManager.eventNames = [
     "click",
     "dblclick",
@@ -394,6 +441,7 @@ THREE.InteractionManager.eventNames = [
     "rightupoutside",
     "rightdown"
 ];
+THREE.InteractionManager.eventNamesString = THREE.InteractionManager.eventNames.join(' ');
 
 THREE.InteractionManager.prototype.intersect = (function()
 {
