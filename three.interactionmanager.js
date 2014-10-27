@@ -135,7 +135,7 @@ THREE.InteractionManager.prototype.constructor = THREE.InteractionManager;
 THREE.InteractionManager.prototype.destroy  = function()
 {
     this.setCamera(null);
-    this.removeEvents(null);
+    this.removeEventListeners();
     this.setRenderer(null, false);
 
     this.mouse = new THREE.InteractionData();
