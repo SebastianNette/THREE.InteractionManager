@@ -76,6 +76,11 @@ THREE.InteractionData.prototype.stopPropagation = function()
     this.toPropagate = false;
 };
 
+THREE.InteractionData.prototype.preventDefault = function()
+{
+    this.originalEvent && this.originalEvent.preventDefault();
+};
+
 // # Constructor
 THREE.InteractionManager = function(camera, renderer, domElement)
 {
