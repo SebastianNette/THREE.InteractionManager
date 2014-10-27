@@ -105,6 +105,8 @@ THREE.InteractionManager = function(camera, renderer, domElement)
 
     this.enabled = true;
 
+    this.scene = null;
+
     this.onClick = this.onClick.bind(this);
     this.onDblClick = this.onDblClick.bind(this);
     
@@ -154,6 +156,7 @@ THREE.InteractionManager.prototype.destroy  = function()
     this.mouse = new THREE.InteractionData();
     this.touches = {};
     this.pool = [];
+    this.scene = null;
 
     this.interactiveItems = {};
 };
@@ -271,6 +274,12 @@ THREE.InteractionManager.prototype.bind = function(object3d, eventName, callback
         namespace: namespace
     });
 
+    // make whole scene interactive
+    if(object3d instanceof THREE.Scene && !this.scene)
+    {
+        this.scene = object3d;
+    }
+
     if(this.interactiveItems[eventName] === undefined)
     {
         this.interactiveItems[eventName] = [];
@@ -372,6 +381,19 @@ THREE.InteractionManager.prototype.unbind = function(object3d, eventName, callba
         {
             this.unbind(object3d, 'mousemove', THREE.InteractionManager.noop);
         }
+    }
+
+    // remove scene interactions
+    if(object3d instanceof THREE.Scene && this.scene && this.scene.events)
+    {
+        for(var prop in this.scene.events)
+        {
+            if(this.scene.events[prop].length)
+            {
+                return;
+            }
+        }
+        this.scene = null;
     }
 };
 
@@ -526,6 +548,13 @@ THREE.InteractionManager.prototype.intersect = (function()
         vector.unproject( camera );
 
         raycaster.ray.set( camera.position, vector.sub( camera.position ).normalize() );
+
+        if(this.scene)
+        {
+            var intersects = raycaster.intersectObjects(items);
+                intersects.push({ object: this.scene });
+            return intersects;
+        }
 
         return raycaster.intersectObjects(items);
     };
