@@ -64,6 +64,7 @@ THREE.InteractionData = function()
     this.y = 0;
     this.target = null;
     this.originalEvent = null;
+    this.touchEvent = null;
     this.toPropagate = false;
     this.eventName = "";
     this.intersect = null;
@@ -102,6 +103,8 @@ THREE.InteractionManager = function(camera, renderer, domElement)
 
     this.selected  = null;
 
+    this.enabled = true;
+
     this.onClick = this.onClick.bind(this);
     this.onDblClick = this.onDblClick.bind(this);
     
@@ -131,11 +134,21 @@ THREE.InteractionManager.noop = function()
 
 THREE.InteractionManager.prototype.constructor = THREE.InteractionManager;
 
+THREE.InteractionManager.prototype.disable  = function()
+{
+    this.enabled = false;
+};
+
+THREE.InteractionManager.prototype.enable  = function()
+{
+    this.enabled = true;
+};
+
 // # Destructor
 THREE.InteractionManager.prototype.destroy  = function()
 {
     this.setCamera(null);
-    this.removeEventListeners();
+    this.removeEvents(null);
     this.setRenderer(null, false);
 
     this.mouse = new THREE.InteractionData();
@@ -236,15 +249,8 @@ THREE.InteractionManager.prototype.bind = function(object3d, eventName, callback
         namespace = data[1]; // todo implement namespacing
     }
 
-    if(eventName === "tap")
-    {
-        eventName = "click";
-    }
-
-    if(eventName === "dbltap")
-    {
-        eventName = "dblclick";
-    }
+    // check atlas
+    eventName = THREE.InteractionManager.Atlas[eventName] || eventName;
 
     // check if valid event name
     console.assert(THREE.InteractionManager.eventNames.indexOf(eventName) !== -1, "not available events:" + eventName);
@@ -308,15 +314,8 @@ THREE.InteractionManager.prototype.unbind = function(object3d, eventName, callba
         namespace = data[1]; // todo implement namespacing
     }
 
-    if(eventName === "tap")
-    {
-        eventName = "click";
-    }
-
-    if(eventName === "dbltap")
-    {
-        eventName = "dblclick";
-    }
+    // check atlas
+    eventName = THREE.InteractionManager.Atlas[eventName] || eventName;
 
     // check if valid event name
     console.assert(THREE.InteractionManager.eventNames.indexOf(eventName) !== -1, "not available events:" + eventName);
@@ -427,6 +426,27 @@ THREE.Object3D.prototype.removeEvents = function()
     return this;
 };
 
+/**
+ * [read-only] Indicates if the sprite is globally visible.
+ *
+ * @property worldVisible
+ * @type Boolean
+ */
+Object.defineProperty(THREE.Object3D.prototype, 'worldVisible', {
+    get: function() {
+        var item = this;
+
+        do
+        {
+            if(!item.visible)return false;
+            item = item.parent;
+        }
+        while(item);
+
+        return true;
+    }
+});
+
 THREE.InteractionManager.eventNames = [
     "click",
     "dblclick",
@@ -448,35 +468,56 @@ THREE.InteractionManager.eventNames = [
 ];
 THREE.InteractionManager.eventNamesString = THREE.InteractionManager.eventNames.join(' ');
 
+THREE.InteractionManager.Atlas = {
+    tap: 'click',
+    dbltap: 'dblclick'
+};
+
+THREE.InteractionManager.AUTO_PREVENT_DEFAULT = true;
+
 THREE.InteractionManager.prototype.intersect = (function()
 {
     var raycaster = new THREE.Raycaster();
     var vector = new THREE.Vector3();
 
+    var rect = null;
+    var time = 0;
+    var delay = 500;
+    var _w, _h;
+
     return function(event, items, data, touchEvent)
     {
-        event = event || window.event;
         data.originalEvent = event;
+        data.touchEvent = touchEvent || null;
 
         // TODO optimize by not check EVERY TIME! maybe half as often? //
-        var rect = this.interactionDOMElement.getBoundingClientRect();
+        var now = Date.now();
+        if(time < now)
+        {
+            rect = this.interactionDOMElement.getBoundingClientRect();
+            time = now + delay;
+            _w = (this.interactionDOMElement.width / rect.width);
+            _h = (this.interactionDOMElement.height / rect.height);
+        }
 
         if(touchEvent)
         {
-            data.x = (touchEvent.clientX - rect.left) * (this.interactionDOMElement.width / rect.width);
-            data.y = (touchEvent.clientY - rect.top) * (this.interactionDOMElement.height / rect.height);
+            //Support for CocoonJS fullscreen scale modes
+            if (navigator.isCocoonJS && !rect.left && !rect.top && !event.target.style.width && !event.target.style.height)
+            {
+                data.x = touchEvent.clientX;
+                data.y = touchEvent.clientY;
+            }
+            else
+            {
+                data.x = (touchEvent.clientX - rect.left) * _w;
+                data.y = (touchEvent.clientY - rect.top) * _h;
+            }
         }
         else
         {
-            data.x = (event.clientX - rect.left) * (this.interactionDOMElement.width / rect.width);
-            data.y = (event.clientY - rect.top) * (this.interactionDOMElement.height / rect.height);
-        }
-
-        if (navigator.isCocoonJS && !rect.left && !rect.top && !event.target.style.width && !event.target.style.height)
-        {
-            //Support for CocoonJS fullscreen scale modes
-            data.x = touchEvent.clientX;
-            data.y = touchEvent.clientY;
+            data.x = (event.clientX - rect.left) * _w;
+            data.y = (event.clientY - rect.top) * _h;
         }
 
         var camera = this.interactionCamera;
@@ -535,6 +576,18 @@ THREE.InteractionManager.prototype.dispatch = function(eventName, object3d, inte
 
 THREE.InteractionManager.prototype.onMouseMove = function(event, data)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+
     var items = this.interactiveItems.mousemove;
     if(!items || !items.length)
     {
@@ -582,8 +635,19 @@ THREE.InteractionManager.prototype.onMouseMove = function(event, data)
 
 THREE.InteractionManager.prototype.onMouseDown = function(event, data)
 {
-    var e = event || window.event;
-    var isRightButton = e.button === 2 || e.which === 3;
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+    
+    var isRightButton = event.button === 2 || event.which === 3;
     var downFunction = isRightButton ? 'rightdown' : 'mousedown';
     var isDown = isRightButton ? '__isRightDown' : '__isDown';
 
@@ -609,8 +673,19 @@ THREE.InteractionManager.prototype.onMouseDown = function(event, data)
 
 THREE.InteractionManager.prototype.onMouseUp = function(event, data)
 {
-    var e = event || window.event;
-    var isRightButton = e.button === 2 || e.which === 3;
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+
+    var isRightButton = event.button === 2 || event.which === 3;
     var upFunction = isRightButton ? 'rightup' : 'mouseup';
     var upOutsideFunction = isRightButton ? 'rightupoutside' : 'mouseupoutside';
     var isDown = isRightButton ? '__isRightDown' : '__isDown';
@@ -650,6 +725,18 @@ THREE.InteractionManager.prototype.onMouseUp = function(event, data)
 
 THREE.InteractionManager.prototype.onClick = function(event, data)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+    
     var items = this.interactiveItems.click;
     if(!items || !items.length)
     {
@@ -671,6 +758,18 @@ THREE.InteractionManager.prototype.onClick = function(event, data)
 
 THREE.InteractionManager.prototype.onDblClick = function(event, data)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+    
     var items = this.interactiveItems.dblclick;
     if(!items || !items.length)
     {
@@ -692,6 +791,18 @@ THREE.InteractionManager.prototype.onDblClick = function(event, data)
 
 THREE.InteractionManager.prototype.onContextmenu = function(event, data)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
+    event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
+    
     var items = this.interactiveItems.contextmenu;
     if(!items || !items.length)
     {
@@ -713,7 +824,17 @@ THREE.InteractionManager.prototype.onContextmenu = function(event, data)
 
 THREE.InteractionManager.prototype.onTouchMove = function(event)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+    
+    // check auto prevent
     event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
 
     var items = this.interactiveItems.touchmove;
     if(!items || !items.length)
@@ -751,7 +872,17 @@ THREE.InteractionManager.prototype.onTouchMove = function(event)
 
 THREE.InteractionManager.prototype.onTouchStart = function(event)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
     event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
 
     var items = this.interactiveItems.touchstart;
     if(!items || !items.length)
@@ -791,7 +922,17 @@ THREE.InteractionManager.prototype.onTouchStart = function(event)
 
 THREE.InteractionManager.prototype.onTouchEnd = function(event)
 {
+    if(!this.enabled)
+    {
+        return;
+    }
+
+    // check auto prevent
     event = event || window.event;
+    if(THREE.InteractionManager.AUTO_PREVENT_DEFAULT)
+    {
+        event.preventDefault();
+    }
 
     var items = this.interactiveItems.touchend;
 
