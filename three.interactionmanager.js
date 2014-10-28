@@ -60,8 +60,8 @@ if(THREE.InteractionData || THREE.InteractionManager)
 
 THREE.InteractionData = function()
 {
-    this.x = 0;
-    this.y = 0;
+    this.x = -10000;
+    this.y = -10000;
     this.target = null;
     this.originalEvent = null;
     this.touchEvent = null;
@@ -168,7 +168,23 @@ THREE.InteractionManager.prototype.setCamera = function(camera)
 
 THREE.InteractionManager.prototype.setRenderer = function(renderer, setDomElement)
 {
-    this.renderer = renderer;
+    if(this.renderer !== renderer)
+    {
+       if(this.renderer)
+        {
+            this.renderer.render = this.renderer.oldRender;
+            this.renderer.oldRender = null;
+        }
+
+        renderer.oldRender = renderer.render;
+        renderer.render = function(scene, camera, renderTarget, forceClear)
+        {
+            this.update();
+            renderer.oldRender.call(renderer, scene, camera, renderTarget, forceClear);
+        }.bind(this);
+
+        this.renderer = renderer;
+    }
 
     if(setDomElement)
     {
@@ -571,7 +587,8 @@ THREE.InteractionManager.prototype.dispatch = function(eventName, object3d, inte
     var handlers = this.bound(eventName, object3d);
 
     // do bubbling
-    if(!handlers || !handlers.length){
+    if(!handlers || !handlers.length)
+    {
         object3d.parent && this.dispatch(eventName, object3d.parent, intersect);
         return;
     }
@@ -603,6 +620,35 @@ THREE.InteractionManager.prototype.dispatch = function(eventName, object3d, inte
     }
 };
 
+THREE.InteractionManager.prototype.update = (function()
+{
+    var lasttime = 0;
+    var delay = 300;
+
+    return function()
+    {
+        if(!this.interactionDOMElement || !this.mouse.x < 0)
+        {
+            return;
+        }
+
+        var now = Date.now();
+        if(lasttime > now)
+        {
+            return;
+        }
+
+        lasttime = now + delay;
+
+        this.onMouseMove(this.mouse.originalEvent || {
+            clientX: -10000,
+            clientY: -10000,
+            preventDefault: THREE.InteractionManager.noop
+        }, this.mouse);
+    };
+
+})();
+
 THREE.InteractionManager.prototype.onMouseMove = function(event, data)
 {
     if(!this.enabled)
@@ -624,6 +670,8 @@ THREE.InteractionManager.prototype.onMouseMove = function(event, data)
     }
 
     var intersects = this.intersect(event, items, data || this.mouse);
+    var cursor = 'inherit';
+    var object = null;
       
     if(intersects.length)
     {
@@ -635,12 +683,18 @@ THREE.InteractionManager.prototype.onMouseMove = function(event, data)
             {
                 out = false;
             }
+
+            object = intersect.object;
         
-            this.dispatch('mousemove', intersect.object, intersect);
+            this.dispatch('mousemove', object, intersect);
+            if(object.buttonMode && object.defaultCursor)
+            {
+                cursor = object.defaultCursor;
+            }
 
             if(!i)
             {
-                var selected = intersect.object;
+                var selected = object;
 
                 if(this.selected && this.selected !== selected)
                 {
@@ -659,6 +713,13 @@ THREE.InteractionManager.prototype.onMouseMove = function(event, data)
     {
         this.selected && this.dispatch('mouseout', this.selected, null);
         this.selected = null;
+    }
+
+    // update cursor style
+    if (this.currentCursorStyle !== cursor)
+    {
+        this.currentCursorStyle = cursor;
+        this.interactionDOMElement.style.cursor = cursor;
     }
 };
 
